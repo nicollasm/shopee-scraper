@@ -1,0 +1,19 @@
+# Ignorar todos os arquivos CSV (resultados do scraping)
+*.csv
+
+# Ignorar todas as imagens baixadas (resultados do scraping)
+images/
+*.jpg
+*.png
+*.jpeg
+
+# Ignorar arquivos sensíveis como arquivos de configuração
+config.json
+secrets.yaml
+
+# Ignorar pastas de vendedores (resultados do scraping)
+*_*/
+
+# Ignorar arquivos temporários
+*.tmp
+*.temp
