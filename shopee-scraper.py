@@ -9,12 +9,12 @@ import requests
 import urllib.request
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-import time  # Para medir o tempo
+import time
 
 # Constantes
 OUTPUT_FOLDER = "output"
 BASE_URL = 'https://shopee.com.br/api/v4/recommend/recommend?bundle=shop_page_product_tab_main&limit=999&offset=0&section=shop_page_product_tab_main_sec&shopid='
-HEADERS = ["ad_id", "title", "stock", "price", "sales", "rating", "likes", "views"]
+HEADERS = ["ad_id", "title", "stock", "price", "sales", "rating", "likes", "views", "description", "reviews"]
 
 # Verifica se a pasta output existe, caso contrário, cria
 if not os.path.exists(OUTPUT_FOLDER):
@@ -86,11 +86,11 @@ def start_scraping():
 
 # Função para efetuar o scraping
 def perform_scraping():
-    global executor  # Para reiniciar o executor
+    global executor
     executor = ThreadPoolExecutor(max_workers=20)
     input_data = clientid_entry.get().strip()
 
-    start_time = time.time()  # Iniciar o cronômetro
+    start_time = time.time()
 
     if "shopee" in input_data:
         seller_id, _ = extract_seller_id(input_data)
@@ -114,15 +114,15 @@ def perform_scraping():
     for i, ad in enumerate(shopee_data['data']['sections'][0]['data']['item']):
         executor.submit(save_product_data, ad, i, total_products, seller_folder, csv_path)
 
-    end_time = time.time()  # Parar o cronômetro
-    elapsed_time = end_time - start_time  # Calcular o tempo decorrido
+    end_time = time.time()
+    elapsed_time = end_time - start_time
 
     status_label.config(text=f"Scraping concluído em {elapsed_time:.2f} segundos.")
 
 
 # Função para salvar os dados do produto
 def save_product_data(ad, index, total, seller_folder, csv_path):
-    start_time = time.time()  # Iniciar o cronômetro para este produto
+    start_time = time.time()
 
     ad_id = ad['itemid']
     title = ad['name']
@@ -130,8 +130,11 @@ def save_product_data(ad, index, total, seller_folder, csv_path):
     log_text.yview(tk.END)
     remaining_label.config(text=f"Produtos restantes: {total - index - 1}")
 
+    description = "Exemplo de descrição"  # Aqui você pode extrair a descrição real do produto
+    reviews = "Exemplo de avaliações"  # Aqui você pode extrair as avaliações reais do produto
+
     save_to_csv([ad_id, title, ad['stock'], ad['price'], ad['historical_sold'], ad['item_rating']['rating_count'][0],
-                 ad['liked_count'], ad['view_count']], csv_path)
+                 ad['liked_count'], ad['view_count'], description, reviews], csv_path)
 
     ad_folder = f"{seller_folder}/{ad_id}"
     os.makedirs(ad_folder, exist_ok=True)
@@ -139,8 +142,8 @@ def save_product_data(ad, index, total, seller_folder, csv_path):
 
     progress_bar["value"] = (index + 1) / total * 100
 
-    end_time = time.time()  # Parar o cronômetro para este produto
-    elapsed_time = end_time - start_time  # Calcular o tempo decorrido para este produto
+    end_time = time.time()
+    elapsed_time = end_time - start_time
     log_text.insert(tk.END, f"Produto: {title} salvo em {elapsed_time:.2f} segundos.\n")
 
 
