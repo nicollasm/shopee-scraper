@@ -1,32 +1,45 @@
 import tkinter as tk
 from tkinter import ttk
 from tkinter import scrolledtext
+from tkinter import messagebox
 import os
 import re
 import csv
 import requests
 import urllib.request
 from datetime import datetime
-from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
+import time  # Para medir o tempo
+
+# Constantes
+OUTPUT_FOLDER = "output"
+BASE_URL = 'https://shopee.com.br/api/v4/recommend/recommend?bundle=shop_page_product_tab_main&limit=999&offset=0&section=shop_page_product_tab_main_sec&shopid='
+HEADERS = ["ad_id", "title", "stock", "price", "sales", "rating", "likes", "views"]
+
+# Verifica se a pasta output existe, caso contrário, cria
+if not os.path.exists(OUTPUT_FOLDER):
+    os.makedirs(OUTPUT_FOLDER)
+
+# Inicializar o executor global
+executor = ThreadPoolExecutor(max_workers=20)
 
 
 # Função para buscar os dados da Shopee
 def fetch_shopee_data(seller_id):
     try:
-        url = f'https://shopee.com.br/api/v4/recommend/recommend?bundle=shop_page_product_tab_main&limit=999&offset=0&section=shop_page_product_tab_main_sec&shopid={seller_id}'
-        response = requests.get(url)
+        response = requests.get(BASE_URL + seller_id, timeout=5)
         response.raise_for_status()
-        return response.json()
+        return response.json(), None
     except requests.RequestException as e:
-        return f"Erro na requisição: {e}"
+        return None, f"Erro na requisição: {e}"
 
 
 # Função para extrair o seller_id de um link
 def extract_seller_id(link):
     match = re.search(r'i\.(\d+)\.', link)
     if match:
-        return match.group(1)
-    return None
+        return match.group(1), None
+    return None, "Link inválido ou seller_id não encontrado"
 
 
 # Função para salvar informações em CSV
@@ -45,21 +58,25 @@ def download_images(images, folder):
 
 # Função para iniciar o scraping
 def start_scraping():
-    input_data = clientid_entry.get()
+    input_data = clientid_entry.get().strip()
+    log_text.delete(1.0, tk.END)
+    progress_bar["value"] = 0
+
+    if not input_data:
+        messagebox.showerror("Erro", "Por favor, insira um clientid ou um link de produto válido.")
+        return
+
     if "shopee" in input_data:
-        seller_id = extract_seller_id(input_data)
+        seller_id, error = extract_seller_id(input_data)
+        if error:
+            messagebox.showerror("Erro", error)
+            return
     else:
         seller_id = input_data
 
-    if not seller_id:
-        status_label.config(text="Por favor, insira um clientid válido ou um link de produto válido.")
-        return
-
-    status_label.config(text="Buscando dados...")
-    shopee_data = fetch_shopee_data(seller_id)
-
-    if "Erro" in str(shopee_data):
-        status_label.config(text=shopee_data)
+    shopee_data, error = fetch_shopee_data(seller_id)
+    if error:
+        messagebox.showerror("Erro", error)
         return
 
     total_products = len(shopee_data['data']['sections'][0]['data']['item'])
@@ -69,43 +86,62 @@ def start_scraping():
 
 # Função para efetuar o scraping
 def perform_scraping():
-    input_data = clientid_entry.get()
+    global executor  # Para reiniciar o executor
+    executor = ThreadPoolExecutor(max_workers=20)
+    input_data = clientid_entry.get().strip()
+
+    start_time = time.time()  # Iniciar o cronômetro
+
     if "shopee" in input_data:
-        seller_id = extract_seller_id(input_data)
+        seller_id, _ = extract_seller_id(input_data)
     else:
         seller_id = input_data
 
     current_time = datetime.now().strftime("%Y%m%d%H%M%S")
-    seller_folder = f"{seller_id}_{current_time}"
+    seller_folder = f"{OUTPUT_FOLDER}/{seller_id}_{current_time}"
 
     if os.path.exists(seller_folder):
-        status_label.config(text="Scraping já realizado para este clientid.")
+        messagebox.showinfo("Info", "Scraping já realizado para este clientid.")
         return
 
     os.makedirs(seller_folder, exist_ok=True)
     csv_path = f"{seller_folder}/informacoes_{current_time}.csv"
-    save_to_csv(["ad_id", "title", "stock", "price", "sales", "rating", "likes", "views"], csv_path)
+    save_to_csv(HEADERS, csv_path)
 
-    shopee_data = fetch_shopee_data(seller_id)
+    shopee_data, _ = fetch_shopee_data(seller_id)
     total_products = len(shopee_data['data']['sections'][0]['data']['item'])
 
     for i, ad in enumerate(shopee_data['data']['sections'][0]['data']['item']):
-        ad_id = ad['itemid']
-        title = ad['name']
-        log_text.insert(tk.END, f"Salvando produto: {title}\n")
-        log_text.yview(tk.END)
-        remaining_label.config(text=f"Produtos restantes: {total_products - i - 1}")
-        save_to_csv(
-            [ad_id, title, ad['stock'], ad['price'], ad['historical_sold'], ad['item_rating']['rating_count'][0],
-             ad['liked_count'], ad['view_count']], csv_path)
+        executor.submit(save_product_data, ad, i, total_products, seller_folder, csv_path)
 
-        ad_folder = f"{seller_folder}/{ad_id}"
-        os.makedirs(ad_folder, exist_ok=True)
-        download_images(ad['images'], ad_folder)
+    end_time = time.time()  # Parar o cronômetro
+    elapsed_time = end_time - start_time  # Calcular o tempo decorrido
 
-        progress_bar["value"] = (i + 1) / total_products * 100
+    status_label.config(text=f"Scraping concluído em {elapsed_time:.2f} segundos.")
 
-    status_label.config(text="Scraping concluído.")
+
+# Função para salvar os dados do produto
+def save_product_data(ad, index, total, seller_folder, csv_path):
+    start_time = time.time()  # Iniciar o cronômetro para este produto
+
+    ad_id = ad['itemid']
+    title = ad['name']
+    log_text.insert(tk.END, f"Salvando produto: {title}\n")
+    log_text.yview(tk.END)
+    remaining_label.config(text=f"Produtos restantes: {total - index - 1}")
+
+    save_to_csv([ad_id, title, ad['stock'], ad['price'], ad['historical_sold'], ad['item_rating']['rating_count'][0],
+                 ad['liked_count'], ad['view_count']], csv_path)
+
+    ad_folder = f"{seller_folder}/{ad_id}"
+    os.makedirs(ad_folder, exist_ok=True)
+    download_images(ad['images'], ad_folder)
+
+    progress_bar["value"] = (index + 1) / total * 100
+
+    end_time = time.time()  # Parar o cronômetro para este produto
+    elapsed_time = end_time - start_time  # Calcular o tempo decorrido para este produto
+    log_text.insert(tk.END, f"Produto: {title} salvo em {elapsed_time:.2f} segundos.\n")
 
 
 # Interface Gráfica
@@ -120,11 +156,10 @@ clientid_label.grid(row=0, column=0, sticky=tk.W, pady=5)
 clientid_entry = ttk.Entry(frame, width=40)
 clientid_entry.grid(row=0, column=1, sticky=tk.W, pady=5)
 
-fetch_button = ttk.Button(frame, text="Buscar Dados", command=lambda: Thread(target=start_scraping).start())
+fetch_button = ttk.Button(frame, text="Buscar Dados", command=start_scraping)
 fetch_button.grid(row=1, columnspan=2, pady=5)
 
-start_button = ttk.Button(frame, text="Iniciar Scraping", state=tk.DISABLED,
-                          command=lambda: Thread(target=perform_scraping).start())
+start_button = ttk.Button(frame, text="Iniciar Scraping", state=tk.DISABLED, command=perform_scraping)
 start_button.grid(row=2, columnspan=2, pady=5)
 
 progress_bar = ttk.Progressbar(frame, orient="horizontal", length=300, mode="determinate")
