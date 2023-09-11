@@ -1,3 +1,4 @@
+from bs4 import BeautifulSoup
 import tkinter as tk
 from tkinter import ttk
 from tkinter import scrolledtext
@@ -9,19 +10,53 @@ import requests
 import urllib.request
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 import time
 
 # Constantes
 OUTPUT_FOLDER = "output"
 BASE_URL = 'https://shopee.com.br/api/v4/recommend/recommend?bundle=shop_page_product_tab_main&limit=999&offset=0&section=shop_page_product_tab_main_sec&shopid='
-HEADERS = ["ad_id", "title", "stock", "price", "sales", "rating", "likes", "views", "description", "reviews"]
+HEADERS = ["ad_id", "title", "stock", "price", "sales", "rating", "likes", "views", "description"]
 
-# Verifica se a pasta output existe, caso contrário, cria
+# Verifica e cria a pasta de saída, se necessário
 if not os.path.exists(OUTPUT_FOLDER):
     os.makedirs(OUTPUT_FOLDER)
 
-# Inicializar o executor global
+# Inicializa o executor global
 executor = ThreadPoolExecutor(max_workers=20)
+
+
+# Função para buscar a descrição do produto com Selenium e BeautifulSoup
+def fetch_product_description_with_selenium(item_id):
+    try:
+        chrome_options = webdriver.ChromeOptions()
+        chrome_options.add_argument("--headless")
+
+        # Adicionar o User-Agent
+        chrome_options.add_argument(
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537")
+
+        driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
+        driver.get(f"https://shopee.com.br/product/{item_id}/")
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(10)  # Aguarda o carregamento da página
+        wait = WebDriverWait(driver, 10)
+        description_element = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, '.shopee-product-detail__description')))
+
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        description_element = soup.select_one(
+            ".shopee-product-detail__description")  # Seletor CSS para encontrar o elemento de descrição
+        description = description_element.text if description_element else "Descrição não encontrada"
+
+        driver.quit()
+        return description, None
+    except Exception as e:
+        return None, f"Erro na extração com Selenium e BeautifulSoup: {e}"
 
 
 # Função para buscar os dados da Shopee
@@ -89,7 +124,6 @@ def perform_scraping():
     global executor
     executor = ThreadPoolExecutor(max_workers=20)
     input_data = clientid_entry.get().strip()
-
     start_time = time.time()
 
     if "shopee" in input_data:
@@ -99,7 +133,6 @@ def perform_scraping():
 
     current_time = datetime.now().strftime("%Y%m%d%H%M%S")
     seller_folder = f"{OUTPUT_FOLDER}/{seller_id}_{current_time}"
-
     if os.path.exists(seller_folder):
         messagebox.showinfo("Info", "Scraping já realizado para este clientid.")
         return
@@ -116,29 +149,34 @@ def perform_scraping():
 
     end_time = time.time()
     elapsed_time = end_time - start_time
-
     status_label.config(text=f"Scraping concluído em {elapsed_time:.2f} segundos.")
 
 
 # Função para salvar os dados do produto
 def save_product_data(ad, index, total, seller_folder, csv_path):
     start_time = time.time()
-
     ad_id = ad['itemid']
     title = ad['name']
     log_text.insert(tk.END, f"Salvando produto: {title}\n")
     log_text.yview(tk.END)
     remaining_label.config(text=f"Produtos restantes: {total - index - 1}")
 
-    description = "Exemplo de descrição"  # Aqui você pode extrair a descrição real do produto
-    reviews = "Exemplo de avaliações"  # Aqui você pode extrair as avaliações reais do produto
+    # Busca a descrição do produto usando Selenium
+    description, error = fetch_product_description_with_selenium(ad_id)
+    if error:
+        description = "Não foi possível obter a descrição"
 
+    # Salva os dados no CSV
     save_to_csv([ad_id, title, ad['stock'], ad['price'], ad['historical_sold'], ad['item_rating']['rating_count'][0],
-                 ad['liked_count'], ad['view_count'], description, reviews], csv_path)
+                 ad['liked_count'], ad['view_count'], description], csv_path)
 
     ad_folder = f"{seller_folder}/{ad_id}"
     os.makedirs(ad_folder, exist_ok=True)
     download_images(ad['images'], ad_folder)
+
+    # Salva a descrição em um arquivo .txt
+    with open(f"{ad_folder}/description.txt", "w", encoding='utf-8') as f:
+        f.write(description)
 
     progress_bar["value"] = (index + 1) / total * 100
 
