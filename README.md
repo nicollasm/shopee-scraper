@@ -48,7 +48,3 @@ $ python main_final_version.py
 ## Créditos
 
 Este projeto é uma otimização do [Shopee Scraper original](https://github.com/paulodarosa/shopee-scraper) criado por Paulo da Rosa.
-
-## Sobre o Autor
-
-Sou um engenheiro de computação e matemático no Brasil. Tenho grande paixão por dados e estatísticas. Resolver problemas e ajudar empresas a tomar decisões melhores com base em dados é minha principal motivação.
